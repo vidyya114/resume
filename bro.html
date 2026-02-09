@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CPU Scheduling Animation Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <style>
+    :root{--scale-ms:700ms}
+    body{background:linear-gradient(180deg,#0f172a,#071030);color:#e6eef8}
+    .process-card{width:110px;height:70px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(2,6,23,.6)}
+    .ready-queue{min-height:110px;display:flex;gap:12px;align-items:center;position:relative;flex-wrap:wrap;}
+    .cpu{width:200px;height:120px;border-radius:12px;border:2px dashed rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;position:relative}
+    .cpu.glow{box-shadow:0 0 40px rgba(59,130,246,.6);border-color:rgba(59,130,246,.5)}
+    .gantt{height:56px;border-radius:6px;background:linear-gradient(90deg,#071032,#0b1224);display:flex;align-items:center;overflow:hidden;position:relative}
+    .gantt-track{display:flex;height:100%;align-items:center}
+    .gantt-block{height:70%;display:flex;align-items:center;justify-content:center;border-radius:6px;margin-right:4px;color:#021124;font-weight:700;padding:0 6px}
+    .timeline{height:30px;position:relative;margin-top:8px}
+    .time-marker{position:absolute;top:0;font-size:12px;color:#a8b3c7;transform:translateX(-50%)}
+    .metrics{background:rgba(255,255,255,.03);padding:12px;border-radius:8px}
+    .popup{position:absolute;top:-56px;left:50%;transform:translateX(-50%);background:rgba(2,6,23,.95);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.06);font-size:13px}
+    .no-select{user-select:none}
+    table th, table td{padding:4px;}
+  </style>
+</head>
+<body class="p-6 no-select">
+  <div class="max-w-6xl mx-auto">
+    <header class="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
+      <div>
+        <h1 class="text-2xl font-bold">CPU Scheduling Animation Simulator</h1>
+        <p class="text-sm text-slate-300">Animated simulation with live Gantt chart and metrics</p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <label for="algorithm">Select Algorithm:</label>
+        <select id="algorithm" class="px-2 py-1 rounded bg-slate-800">
+          <option value="fcfs">FCFS</option>
+          <option value="sjf">SJF</option>
+          <option value="priority">Priority</option>
+          <option value="rr">Round Robin</option>
+        </select>
+        <button id="playBtn" class="px-4 py-2 bg-blue-600 rounded-lg shadow">Play</button>
+        <button id="pauseBtn" class="px-4 py-2 bg-yellow-500 rounded-lg shadow">Pause</button>
+        <button id="restartBtn" class="px-4 py-2 bg-rose-500 rounded-lg shadow">Restart</button>
+      </div>
+    </header>
+
+    <section class="mb-6">
+      <h2 class="font-semibold mb-2">Process Input</h2>
+      <table class="w-full text-sm table-auto border-collapse mb-2">
+        <thead class="text-slate-300">
+          <tr>
+            <th>Process</th><th>Arrival Time</th><th>Burst Time</th><th class="priority-col">Priority</th><th class="rr-col">Quantum</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="processInput"></tbody>
+      </table>
+      <button id="addProcess" class="px-3 py-1 bg-green-600 rounded-lg">Add Process</button>
+    </section>
+
+    <section class="grid grid-cols-3 gap-6 mb-6">
+      <div class="col-span-3 md:col-span-2">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold">Ready Queue</h2>
+          <div id="readyZone" class="ready-queue mt-3 p-3 bg-slate-900/40 rounded-xl"></div>
+        </div>
+
+        <div class="flex items-center gap-8">
+          <div class="flex-1 flex flex-col items-center gap-3">
+            <div class="cpu" id="cpuBox">
+              <div id="cpuContent" class="text-slate-200">CPU</div>
+              <div id="cpuPopup" style="display:none;" class="popup"></div>
+            </div>
+            <div class="w-full mt-2">
+              <div class="h-3 bg-slate-800 rounded overflow-hidden">
+                <div id="cpuProgress" style="width:0%;height:100%;background:linear-gradient(90deg,#60a5fa,#3b82f6)"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex-1">
+            <h2 class="text-lg font-semibold">Gantt Chart</h2>
+            <div id="ganttArea" class="mt-3 p-3">
+              <div id="ganttBar" class="gantt">
+                <div id="ganttTrack" class="gantt-track"></div>
+              </div>
+              <div id="timeline" class="timeline">
+                <div id="timeMarkers"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="col-span-3 md:col-span-1">
+        <div class="metrics">
+          <h3 class="font-semibold">Metrics (live)</h3>
+          <div class="mt-2 text-sm space-y-1">
+            <div>Average TAT: <span id="avgTAT">-</span></div>
+            <div>Average WT: <span id="avgWT">-</span></div>
+            <div>Makespan: <span id="makespan">-</span></div>
+            <div>Throughput: <span id="throughput">-</span></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="mt-6">
+      <h3 class="font-semibold">Detailed Table</h3>
+      <div class="mt-3 bg-slate-900/40 p-3 rounded-xl overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-slate-300 text-left">
+            <tr><th>Process</th><th>AT</th><th>BT</th><th>ST</th><th>CT</th><th>TAT</th><th>WT</th><th>Priority</th></tr>
+          </thead>
+          <tbody id="detailTable" class="text-slate-100"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const SCALE_MS = 700;
+    const PX_PER_UNIT = 40;
+
+    let processes = [];
+    let quantum = 2;
+    let mainTl = null;
+
+    const readyZone = document.getElementById('readyZone');
+    const cpuBox = document.getElementById('cpuBox');
+    const cpuContent = document.getElementById('cpuContent');
+    const cpuProgress = document.getElementById('cpuProgress');
+    const cpuPopup = document.getElementById('cpuPopup');
+    const ganttTrack = document.getElementById('ganttTrack');
+    const ganttBar = document.getElementById('ganttBar');
+    const timeMarkers = document.getElementById('timeMarkers');
+    const detailTable = document.getElementById('detailTable');
+    const algorithmSelect = document.getElementById('algorithm');
+
+    const playBtn = document.getElementById('playBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const addProcessBtn = document.getElementById('addProcess');
+    const processInput = document.getElementById('processInput');
+
+    const colors = ["#93c5fd","#fca5a5","#fef08a","#86efac","#fbbf24","#a78bfa","#f472b6"];
+
+    function addProcessRow(id="", at=0, bt=1, pr=1) {
+      const row = document.createElement("tr");
+      const index = processInput.children.length;
+      row.innerHTML = `
+        <td><input type="text" value="${id || 'P'+(index+1)}" class="px-1 py-0.5 w-16 bg-slate-800 text-white rounded"></td>
+        <td><input type="number" value="${at}" class="px-1 py-0.5 w-12 bg-slate-800 text-white rounded min-0"></td>
+        <td><input type="number" value="${bt}" class="px-1 py-0.5 w-12 bg-slate-800 text-white rounded min-1"></td>
+        <td class="priority-col"><input type="number" value="${pr}" class="px-1 py-0.5 w-12 bg-slate-800 text-white rounded min-1"></td>
+        <td class="rr-col"><input type="number" value="${quantum}" class="px-1 py-0.5 w-12 bg-slate-800 text-white rounded min-1"></td>
+        <td><button class="px-2 py-0.5 bg-red-600 rounded" onclick="this.closest('tr').remove()">Delete</button></td>
+      `;
+      processInput.appendChild(row);
+      updateColumns();
+    }
+
+    function updateColumns(){
+      const algo = algorithmSelect.value;
+      document.querySelectorAll(".priority-col").forEach(td=>td.style.display=(algo==="priority"?"table-cell":"none"));
+      document.querySelectorAll(".rr-col").forEach(td=>td.style.display=(algo==="rr"?"table-cell":"none"));
+    }
+
+    algorithmSelect.addEventListener("change", updateColumns);
+    addProcessBtn.addEventListener("click", ()=>addProcessRow());
+
+    function getProcessesFromInput(){
+      const trs = processInput.querySelectorAll("tr");
+      let arr = [];
+      trs.forEach((tr,i)=>{
+        const inputs = tr.querySelectorAll("input");
+        arr.push({
+          id: inputs[0].value,
+          at: parseInt(inputs[1].value),
+          bt: parseInt(inputs[2].value),
+          pr: parseInt(inputs[3]?.value || 0),
+          color: colors[i % colors.length]
+        });
+      });
+      if(algorithmSelect.value==="rr"){
+        quantum = parseInt(trs[0]?.querySelectorAll("input")[4]?.value || 2);
+      }
+      return arr;
+    }
+
+    function computeSchedule(arr, algo="fcfs"){
+      let ctPrev=0;
+      let schedule=[];
+      if(algo==="fcfs"){
+        schedule = arr.slice().sort((a,b)=>a.at-b.at).map(p=>{
+          const st = Math.max(p.at, ctPrev);
+          const ct = st+p.bt;
+          ctPrev = ct;
+          return {...p, st, ct, tat:ct-p.at, wt:(ct-p.at)-p.bt};
+        });
+      } else if(algo==="sjf"){
+        let time=0;
+        let completed=[];
+        let remaining = arr.map(p=>({...p}));
+        while(remaining.length){
+          let ready = remaining.filter(p=>p.at<=time);
+          if(!ready.length) { time++; continue; }
+          let next = ready.reduce((a,b)=>a.bt<b.bt?a:b);
+          next.st = Math.max(time,next.at);
+          next.ct = next.st+next.bt;
+          next.tat = next.ct-next.at;
+          next.wt = next.tat-next.bt;
+          time = next.ct;
+          completed.push(next);
+          remaining = remaining.filter(p=>p.id!==next.id);
+        }
+        schedule = completed;
+      } else if(algo==="priority"){
+        let time=0;
+        let completed=[];
+        let remaining = arr.map(p=>({...p}));
+        while(remaining.length){
+          let ready = remaining.filter(p=>p.at<=time);
+          if(!ready.length) { time++; continue; }
+          let next = ready.reduce((a,b)=>a.pr<b.pr?a:b);
+          next.st = Math.max(time,next.at);
+          next.ct = next.st+next.bt;
+          next.tat = next.ct-next.at;
+          next.wt = next.tat-next.bt;
+          time = next.ct;
+          completed.push(next);
+          remaining = remaining.filter(p=>p.id!==next.id);
+        }
+        schedule = completed;
+      } else if(algo==="rr"){
+        let time=0;
+        let queue=[];
+        let remaining = arr.map(p=>({...p, rem: p.bt}));
+        let completed=[];
+        while(completed.length<arr.length){
+          remaining.filter(p=>p.at<=time && !queue.includes(p)).forEach(p=>queue.push(p));
+          if(queue.length===0){time++; continue;}
+          let p = queue.shift();
+          let exec = Math.min(p.rem, quantum);
+          p.st = time;
+          time += exec;
+          p.rem -= exec;
+          if(p.rem===0){ p.ct=time; p.tat=p.ct-p.at; p.wt=p.tat-p.bt; completed.push(p);}
+          else{ queue.push(p);}
+          remaining.filter(p=>p.at<=time && !queue.includes(p) && !completed.includes(p)).forEach(p=>queue.push(p));
+        }
+        schedule = completed;
+      }
+      return schedule;
+    }
+
+    function initUI(scheduled){
+      readyZone.innerHTML="";
+      ganttTrack.innerHTML="";
+      timeMarkers.innerHTML="";
+      detailTable.innerHTML="";
+      cpuContent.textContent="CPU";
+      cpuProgress.style.width="0%";
+      cpuPopup.style.display="none";
+
+      scheduled.forEach((p,i)=>{
+        const card = document.createElement("div");
+        card.className="process-card";
+        card.id="card-"+p.id;
+        card.style.background=p.color;
+        card.style.opacity=0;
+        card.innerHTML=`<div style="font-weight:700">${p.id}</div><div style="font-size:12px">AT:${p.at} BT:${p.bt}${p.pr?" PR:"+p.pr:""}</div>`;
+        readyZone.appendChild(card);
+
+        const row = document.createElement("tr");
+        row.innerHTML=`<td>${p.id}</td><td>${p.at}</td><td>${p.bt}</td><td id="st-${p.id}">-</td><td id="ct-${p.id}">-</td><td id="tat-${p.id}">-</td><td id="wt-${p.id}">-</td><td>${p.pr||'-'}</td>`;
+        detailTable.appendChild(row);
+      });
+    }
+
+    function makeGanttBlock(p, widthFactor=1){
+      const block = document.createElement("div");
+      block.className="gantt-block";
+      block.style.background=p.color;
+      block.style.width=(p.bt*PX_PER_UNIT*widthFactor)+"px";
+      block.style.opacity=0;
+      block.textContent=p.id;
+      return block;
+    }
+
+    function placeTimeMarker(blockElem, timeVal){
+      const marker = document.createElement("div");
+      marker.className="time-marker";
+      marker.textContent=timeVal;
+      const ganttRect = ganttBar.getBoundingClientRect();
+      const blockRect = blockElem.getBoundingClientRect();
+      const left = Math.round(blockRect.right - ganttRect.left);
+      marker.style.left=left+"px";
+      timeMarkers.appendChild(marker);
+    }
+
+    function animateSchedule(scheduled){
+      if(mainTl) try{ mainTl.kill(); }catch(e){}
+      mainTl = gsap.timeline({paused:true});
+
+      scheduled.forEach((p,i)=>{
+        mainTl.to('#card-'+p.id, {duration:0.25, opacity:1, ease:'power1.out'}, p.st*(SCALE_MS/1000));
+      });
+
+      scheduled.forEach(p=>{
+        mainTl.add(()=>{
+          const card = document.getElementById('card-'+p.id);
+          const rect = card.getBoundingClientRect();
+          const bodyRect = document.body.getBoundingClientRect();
+          const clone = card.cloneNode(true);
+          clone.id='clone-'+p.id;
+          clone.style.position="absolute";
+          clone.style.left=(rect.left-bodyRect.left)+'px';
+          clone.style.top=(rect.top-bodyRect.top)+'px';
+          clone.style.width=rect.width+'px';
+          clone.style.height=rect.height+'px';
+          clone.style.zIndex=9999;
+          clone.style.margin='0';
+          document.body.appendChild(clone);
+          const cpuRect = cpuBox.getBoundingClientRect();
+          const destX = cpuRect.left + cpuRect.width/2 - rect.width/2 - bodyRect.left;
+          const destY = cpuRect.top + cpuRect.height/2 - rect.height/2 - bodyRect.top;
+          gsap.to(clone,{duration:0.6,x:destX-(rect.left-bodyRect.left),y:destY-(rect.top-bodyRect.top),ease:'power2.inOut',onComplete:()=>{
+            cpuBox.classList.add('glow');
+            cpuContent.textContent=p.id+" (running)";
+            cpuPopup.style.display='block';
+            cpuPopup.textContent=p.id+" Running BT="+p.bt;
+            gsap.fromTo(cpuProgress,{width:'0%'},{width:'100%',duration:(p.ct-p.st)*(SCALE_MS/1000),ease:'linear'});
+          }});
+        },p.st*(SCALE_MS/1000));
+
+        mainTl.add(()=>{
+          const clone = document.getElementById('clone-'+p.id);
+          if(!clone){ return; }
+          const finalBlock = makeGanttBlock(p);
+          finalBlock.style.visibility='hidden';
+          ganttTrack.appendChild(finalBlock);
+          const blockRect = finalBlock.getBoundingClientRect();
+          const ganttRect = ganttBar.getBoundingClientRect();
+          const bodyRect = document.body.getBoundingClientRect();
+          const dx = blockRect.left - (clone.getBoundingClientRect().left);
+          const dy = blockRect.top - (clone.getBoundingClientRect().top);
+          gsap.to(clone,{duration:0.6,x:dx,y:dy,ease:'power2.inOut',onComplete:()=>{
+            finalBlock.style.visibility='visible';
+            finalBlock.style.opacity=1;
+            clone.remove();
+            cpuBox.classList.remove('glow');
+            cpuContent.textContent='CPU';
+            cpuProgress.style.width='0%';
+            placeTimeMarker(finalBlock,p.ct);
+            document.getElementById('st-'+p.id).textContent=p.st;
+            document.getElementById('ct-'+p.id).textContent=p.ct;
+            document.getElementById('tat-'+p.id).textContent=p.tat;
+            document.getElementById('wt-'+p.id).textContent=p.wt;
+            const popup = cpuPopup;
+            popup.style.display='block';
+            popup.textContent=p.id+" Finished ✅ CT="+p.ct+", TAT="+p.tat+", WT="+p.wt;
+            gsap.fromTo(popup,{opacity:0,y:-8},{opacity:1,y:0,duration:0.25});
+            gsap.to(popup,{opacity:0,delay:1.1,duration:0.5,onComplete:()=>{popup.style.display='none'}});
+          }});
+        },p.ct*(SCALE_MS/1000));
+      });
+
+      const lastCt = scheduled[scheduled.length-1]?.ct || 0;
+      mainTl.add(()=>{
+        const avgTAT = (scheduled.reduce((s,x)=>s+x.tat,0)/scheduled.length).toFixed(2);
+        const avgWT = (scheduled.reduce((s,x)=>s+x.wt,0)/scheduled.length).toFixed(2);
+        document.getElementById('avgTAT').textContent=avgTAT;
+        document.getElementById('avgWT').textContent=avgWT;
+        document.getElementById('makespan').textContent=lastCt;
+        document.getElementById('throughput').textContent=(scheduled.length/lastCt).toFixed(3);
+      }, lastCt*(SCALE_MS/1000)+0.25);
+
+      mainTl.play();
+    }
+
+    playBtn.addEventListener("click", ()=>{
+      processes = getProcessesFromInput();
+      const algo = algorithmSelect.value;
+      const scheduled = computeSchedule(processes, algo);
+      initUI(scheduled);
+      animateSchedule(scheduled);
+    });
+
+    pauseBtn.addEventListener("click", ()=>{ if(mainTl) mainTl.pause(); });
+    restartBtn.addEventListener("click", ()=>{
+      if(mainTl) try{ mainTl.kill(); }catch(e){}
+      initUI([]);
+    });
+
+    addProcessRow("P1",0,5,1);
+    addProcessRow("P2",1,3,2);
+    addProcessRow("P3",2,8,3);
+    addProcessRow("P4",3,6,2);
+  </script>
+</body>
+</html>
+guys this code for that
